@@ -74,8 +74,8 @@ def process_kgs_data(main_directory, output_file):
             print(f"{file}: {error}")
 
 def main():
-    main_directory = r"C:\Users\User\Desktop\Gogame data" # data path
-    output_file = "processed_kgs_data.npz"
+    main_directory = r"C:\Users\User\Desktop\gogamedata8" # data path
+    output_file = "processed_kgs_data8.npz"
     process_kgs_data(main_directory, output_file)
     print("處理完成")
 
