@@ -1,0 +1,55 @@
+2025-02-25 20:59:09,004 - INFO - 已強制使用CPU進行計算
+2025-02-25 20:59:09,004 - INFO - 從 C:\Users\User\Desktop\SilvAGo\processed_kgs_data8.npz 載入數據...
+2025-02-25 20:59:10,922 - INFO - 數據形狀：X: (965034, 19, 19), y: (965034, 19, 19)
+2025-02-25 21:10:19,971 - INFO - 已強制使用CPU進行計算
+2025-02-25 21:10:19,971 - INFO - 從 C:\Users\User\Desktop\SilvAGo\processed_kgs_data8.npz 載入數據...
+2025-02-25 21:10:21,994 - INFO - 原始數據形狀：X: (965034, 19, 19), y: (965034, 19, 19)
+2025-02-25 21:10:22,097 - INFO - 應用抽樣後的數據形狀：X: (10000, 19, 19), y: (10000, 19, 19)
+2025-02-25 21:10:22,097 - INFO - 抽樣比例: 1.04%
+2025-02-25 21:10:22,098 - INFO - 開始處理數據...
+2025-02-25 21:10:23,770 - INFO - 處理完成。訓練集大小: 9000, 驗證集大小: 1000
+2025-02-25 21:10:23,772 - INFO - 創建CNN-RNN混合模型...
+2025-02-25 21:10:24,192 - ERROR - 程序執行過程中發生錯誤: The filepath provided must end in `.keras` (Keras model format). Received: filepath=models/cnn_rnn_mcts\checkpoint_{epoch:02d}
+Traceback (most recent call last):
+  File "C:\Users\User\Desktop\SilvAGo\train_cnn_mcts.py", line 355, in <module>
+    main()
+  File "C:\Users\User\Desktop\SilvAGo\train_cnn_mcts.py", line 342, in main
+    model, history = train_cnn_rnn_model(
+                     ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\Desktop\SilvAGo\train_cnn_mcts.py", line 223, in train_cnn_rnn_model
+    tf.keras.callbacks.ModelCheckpoint(
+  File "C:\Users\User\anaconda3\Lib\site-packages\keras\src\callbacks\model_checkpoint.py", line 194, in __init__
+    raise ValueError(
+ValueError: The filepath provided must end in `.keras` (Keras model format). Received: filepath=models/cnn_rnn_mcts\checkpoint_{epoch:02d}
+2025-02-25 21:13:07,881 - INFO - 已強制使用CPU進行計算
+2025-02-25 21:13:07,881 - INFO - 從 C:\Users\User\Desktop\SilvAGo\processed_kgs_data8.npz 載入數據...
+2025-02-25 21:13:09,652 - INFO - 原始數據形狀：X: (965034, 19, 19), y: (965034, 19, 19)
+2025-02-25 21:13:09,741 - INFO - 應用抽樣後的數據形狀：X: (10000, 19, 19), y: (10000, 19, 19)
+2025-02-25 21:13:09,741 - INFO - 抽樣比例: 1.04%
+2025-02-25 21:13:09,742 - INFO - 開始處理數據...
+2025-02-25 21:13:11,825 - INFO - 處理完成。訓練集大小: 9000, 驗證集大小: 1000
+2025-02-25 21:13:11,827 - INFO - 創建CNN-RNN混合模型...
+2025-02-25 21:13:12,178 - INFO - 開始訓練模型...
+2025-02-25 21:24:41,455 - INFO - 已強制使用CPU進行計算
+2025-02-25 21:24:41,455 - INFO - 從 C:\Users\User\Desktop\SilvAGo\processed_kgs_data8.npz 載入數據...
+2025-02-25 21:24:43,458 - INFO - 原始數據形狀：X: (965034, 19, 19), y: (965034, 19, 19)
+2025-02-25 21:24:43,591 - INFO - 應用抽樣後的數據形狀：X: (10000, 19, 19), y: (10000, 19, 19)
+2025-02-25 21:24:43,592 - INFO - 抽樣比例: 1.04%
+2025-02-25 21:24:43,592 - INFO - 開始處理數據...
+2025-02-25 21:24:45,258 - INFO - 處理完成。訓練集大小: 9000, 驗證集大小: 1000
+2025-02-25 21:24:45,260 - INFO - 創建CNN-RNN混合模型...
+2025-02-25 21:24:45,616 - INFO - 開始訓練模型...
+2025-02-25 21:27:57,179 - ERROR - 程序執行過程中發生錯誤: Invalid filepath extension for saving. Please add either a `.keras` extension for the native Keras format (recommended) or a `.h5` extension. Use `model.export(filepath)` if you want to export a SavedModel for use with TFLite/TFServing/etc. Received: filepath=models/cnn_rnn_mcts\final_model.
+Traceback (most recent call last):
+  File "C:\Users\User\Desktop\SilvAGo\train_cnn_mcts.py", line 355, in <module>
+    main()
+  File "C:\Users\User\Desktop\SilvAGo\train_cnn_mcts.py", line 342, in main
+    model, history = train_cnn_rnn_model(
+                     ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\User\Desktop\SilvAGo\train_cnn_mcts.py", line 256, in train_cnn_rnn_model
+    model.save(model_path)
+  File "C:\Users\User\anaconda3\Lib\site-packages\keras\src\utils\traceback_utils.py", line 122, in error_handler
+    raise e.with_traceback(filtered_tb) from None
+  File "C:\Users\User\anaconda3\Lib\site-packages\keras\src\saving\saving_api.py", line 114, in save_model
+    raise ValueError(
+ValueError: Invalid filepath extension for saving. Please add either a `.keras` extension for the native Keras format (recommended) or a `.h5` extension. Use `model.export(filepath)` if you want to export a SavedModel for use with TFLite/TFServing/etc. Received: filepath=models/cnn_rnn_mcts\final_model.
