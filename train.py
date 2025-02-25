@@ -1,504 +1,280 @@
-import numpy as np
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+圍棋AI主訓練腳本
+"""
+
+import os
+import sys
+import argparse
+import json
+import logging
 import tensorflow as tf
-from tensorflow.keras import layers, models
-import random
-from tqdm import tqdm
-import matplotlib.pyplot as plt
 import numpy as np
+from datetime import datetime
 
-class GoGame:
-    def __init__(self):
-        self.size = 19
-        self.board = np.zeros((self.size, self.size), dtype=int)
-        self.current_player = 1  # 1 代表黑棋, -1 代表白棋
-        self.ko = None
-        self.last_move = None
-        self.passes = 0
-        self.captured_stones = {1: 0, -1: 0}  # 黑棋: 0, 白棋: 0
-        self.komi = 6.5  # 貼目
-        self.history = [] 
-        self.dead_stones = set()  # 用於標記掛掉的棋子
+# 確保可以導入自定義模組
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-    def play(self, move):
-        if move == 'pass':
-            self.passes += 1
-            self.current_player = -self.current_player
-            self.history.append(self.board.copy())
-            return True
+# 導入自定義模組
+from game.go_game import GoGame
+from ml.model import create_go_model, create_light_model, create_cnn_rnn_model
+from ml.training import TrainingPipeline
+from data.dataset import process_sgf_files, load_data
+from search.mcts import MCTS
 
-        if not self.is_valid_move(move):
-            return False
+# 設置日誌記錄
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('train.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
-        x, y = move
-        self.board[x, y] = self.current_player
-        captured = self.remove_captured_stones(self.get_opponent(self.current_player))
-        
-        if self.is_suicide(x, y) and not captured:
-            self.board[x, y] = 0
-            return False
+def parse_args():
+    """解析命令行參數。"""
+    parser = argparse.ArgumentParser(description='圍棋AI訓練腳本')
+    
+    # 訓練模式
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'selfplay', 'process_data', 'eval'],
+                       help='訓練模式: train-完整訓練, selfplay-僅自我對弈, process_data-處理sgf數據, eval-評估模型')
+    
+    # 數據相關
+    parser.add_argument('--sgf_dir', type=str, default='data/sgf',
+                       help='SGF文件目錄')
+    parser.add_argument('--data_file', type=str, default='data/processed_data.npz',
+                       help='處理後的數據文件')
+    parser.add_argument('--min_rank', type=int, default=7,
+                       help='最低段位過濾(默認7段以上)')
+    
+    # 模型相關
+    parser.add_argument('--model_type', type=str, default='residual', choices=['residual', 'light', 'cnn_rnn'],
+                       help='模型類型')
+    parser.add_argument('--model_path', type=str, default=None,
+                       help='預訓練模型路徑(如果存在)')
+    parser.add_argument('--output_dir', type=str, default='models',
+                       help='模型輸出目錄')
+    
+    # 訓練參數
+    parser.add_argument('--batch_size', type=int, default=256,
+                       help='批次大小')
+    parser.add_argument('--epochs', type=int, default=10,
+                       help='每次迭代的訓練輪數')
+    parser.add_argument('--iterations', type=int, default=20,
+                       help='訓練迭代次數')
+    parser.add_argument('--lr', type=float, default=0.001,
+                       help='初始學習率')
+    parser.add_argument('--use_mixed_precision', action='store_true',
+                       help='使用混合精度訓練')
+    
+    # 自我對弈參數
+    parser.add_argument('--num_games', type=int, default=500,
+                       help='自我對弈遊戲數量')
+    parser.add_argument('--mcts_sims', type=int, default=800,
+                       help='MCTS模擬次數')
+    
+    # 系統相關
+    parser.add_argument('--gpu', type=str, default=None,
+                       help='指定GPU設備(例如 "0,1")')
+    parser.add_argument('--verbose', action='store_true',
+                       help='詳細輸出')
+    
+    return parser.parse_args()
 
-        self.remove_captured_stones(self.current_player)
-        self.last_move = move
-        self.passes = 0
-        self.current_player = self.get_opponent(self.current_player)
-        
-        # 檢查避免出現重複動作
-        board_state = self.board.copy()
-        if any(np.array_equal(board_state, hist) for hist in self.history):
-            self.board[x, y] = 0
-            return False
-        
-        self.history.append(board_state)
-        return True
+def set_gpu_options(gpu_str=None):
+    """設置GPU選項。"""
+    if gpu_str is not None:
+        os.environ['CUDA_VISIBLE_DEVICES'] = gpu_str
+        logger.info(f"使用GPU設備: {gpu_str}")
+    
+    # 設置GPU成長模式
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            logger.info(f"發現 {len(gpus)} 個GPU設備，已設置記憶體增長模式")
+        except RuntimeError as e:
+            logger.error(f"設置GPU記憶體增長模式失敗: {str(e)}")
 
-    def is_valid_move(self, move):
-        if move == 'pass':
-            return True
-        x, y = move
-        if x < 0 or x >= self.size or y < 0 or y >= self.size:
-            return False
-        if self.board[x, y] != 0:
-            return False
-        return True
-
-    def get_opponent(self, player):
-        return -player
-
-    def get_adjacent_points(self, x, y):
-        adjacent = []
-        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < self.size and 0 <= ny < self.size:
-                adjacent.append((nx, ny))
-        return adjacent
-
-    def get_group(self, x, y):
-        color = self.board[x, y]
-        group = set([(x, y)])
-        frontier = [(x, y)]
-        while frontier:
-            current = frontier.pop()
-            for adj in self.get_adjacent_points(*current):
-                if self.board[adj] == color and adj not in group:
-                    group.add(adj)
-                    frontier.append(adj)
-        return group
-
-    def get_liberties(self, group):
-        liberties = set()
-        for x, y in group:
-            for adj in self.get_adjacent_points(x, y):
-                if self.board[adj[0], adj[1]] == 0:
-                    liberties.add(adj)
-        return liberties
-
-    def remove_captured_stones(self, player):
-        captured = set()
-        for x in range(self.size):
-            for y in range(self.size):
-                if self.board[x, y] == player:
-                    group = self.get_group(x, y)
-                    if not self.get_liberties(group):
-                        for stone in group:
-                            self.board[stone] = 0
-                            captured.add(stone)
-        self.captured_stones[self.get_opponent(player)] += len(captured)
-        return captured
-
-    def is_suicide(self, x, y):
-        group = self.get_group(x, y)
-        return len(self.get_liberties(group)) == 0
-
-    def get_legal_moves(self):
-        moves = ['pass']
-        for x in range(self.size):
-            for y in range(self.size):
-                if self.is_valid_move((x, y)):
-                    moves.append((x, y))
-        return moves
-
-    def is_game_over(self):
-        return self.passes >= 2
-
-    def mark_dead_stones(self):
-        pass
-
-    def get_winner(self):
-        if not self.is_game_over():
-            return None
-        
-        self.mark_dead_stones()  # 在計算得分前標記掛掉的棋子
-        black_score, white_score = self.calculate_score()
-        
-        if black_score > white_score:
-            return 1, black_score, white_score
-        elif white_score > black_score:
-            return -1, black_score, white_score
-        else:
-            return 0, black_score, white_score  # 平局
-
-    def calculate_score(self):
-        territory = self.calculate_territory()
-        black_score = np.sum(self.board == 1) + self.captured_stones[1] + np.sum(territory == 1)
-        white_score = np.sum(self.board == -1) + self.captured_stones[-1] + np.sum(territory == -1) + self.komi
-        
-        # 把死掉的棋子移掉後計算分數
-        for x, y in self.dead_stones:
-            if self.board[x, y] == 1:
-                black_score -= 1
-                white_score += 1
-            elif self.board[x, y] == -1:
-                white_score -= 1
-                black_score += 1
-        
-        return black_score, white_score
-
-    def calculate_territory(self):
-        territory = np.zeros((self.size, self.size))
-        visited = set()
-
-        def flood_fill(x, y, color):
-            if (x, y) in visited or not (0 <= x < self.size and 0 <= y < self.size):
-                return set(), set(), color
-            visited.add((x, y))
-            if self.board[x, y] != 0 and (x, y) not in self.dead_stones:
-                return set(), set(), self.board[x, y]
-            
-            empty = {(x, y)}
-            border = set()
-            for nx, ny in self.get_adjacent_points(x, y):
-                n_empty, n_border, n_color = flood_fill(nx, ny, color)
-                empty |= n_empty
-                border |= n_border
-                if n_color != 0 and color == 0:
-                    color = n_color
-                elif n_color != 0 and n_color != color:
-                    color = 0  # 無主的領地
-            if color == 0:
-                border |= {(x, y)}
-            return empty, border, color
-
-        for x in range(self.size):
-            for y in range(self.size):
-                if (x, y) not in visited and (self.board[x, y] == 0 or (x, y) in self.dead_stones):
-                    empty, border, color = flood_fill(x, y, 0)
-                    if color != 0:
-                        for ex, ey in empty:
-                            territory[ex, ey] = color
-
-        return territory
-
-# CNN 模型定義
-def create_cnn_model(input_shape=(19, 19, 3)):
-    inputs = layers.Input(shape=input_shape)
-    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(inputs)
-    x = layers.Dropout(0.2)(x)
-    x = layers.Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-    x = layers.Dropout(0.2)(x)
-    x = layers.Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-    x = layers.Dropout(0.2)(x)
-    x = layers.Conv2D(256, (3, 3), activation='relu', padding='same')(x)
-    x = layers.Dropout(0.2)(x)
-    x = layers.Flatten()(x)
-    x = layers.Dense(512, activation='relu')(x)
-    x = layers.Dropout(0.5)(x)
-    policy_output = layers.Dense(361, activation='softmax', name='policy')(x)
-    value_output = layers.Dense(1, activation='tanh', name='value')(x)
-    model = models.Model(inputs=inputs, outputs=[policy_output, value_output])
-    model.compile(optimizer='adam',
-                loss={'policy': 'categorical_crossentropy', 'value': 'mse'},
-                loss_weights={'policy': 1.0, 'value': 1.0},
-                metrics={'policy': 'accuracy', 'value': 'mae'})
+def create_model(args):
+    """創建模型。"""
+    # 定義輸入形狀
+    input_shape = (19, 19, 17)  # 標準圍棋特徵平面
+    
+    # 根據模型類型創建模型
+    if args.model_type == 'residual':
+        model = create_go_model(input_shape=input_shape, num_filters=256, num_res_blocks=19)
+        logger.info("創建完整殘差網絡模型")
+    elif args.model_type == 'light':
+        model = create_light_model(input_shape=input_shape, num_filters=128, num_res_blocks=10)
+        logger.info("創建輕量級殘差網絡模型")
+    elif args.model_type == 'cnn_rnn':
+        model = create_cnn_rnn_model(board_input_shape=input_shape)
+        logger.info("創建CNN-RNN混合模型")
+    else:
+        raise ValueError(f"未知的模型類型: {args.model_type}")
+    
+    # 載入預訓練權重（如果存在）
+    if args.model_path and os.path.exists(args.model_path):
+        try:
+            model.load_weights(args.model_path)
+            logger.info(f"從 {args.model_path} 載入權重")
+        except Exception as e:
+            logger.error(f"載入權重失敗: {str(e)}")
+    
     return model
 
-def create_dataset(data, batch_size):
-    dataset = tf.data.Dataset.from_tensor_slices(data)
-    return dataset.shuffle(10000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-
-def lr_schedule(epoch, lr):
-    if epoch < 10:
-        return lr
-    else:
-        return lr * tf.math.exp(-0.1)
-
-
-# MCTS 節點類
-class MCTSNode:
-    def __init__(self, game_state, parent=None, move=None):
-        self.game_state = game_state
-        self.parent = parent
-        self.move = move
-        self.children = {}
-        self.visits = 0
-        self.value = 0
-
-# MCTS 實現
-class MCTS:
-    def __init__(self, model, num_simulations=1000, c_puct=1.0):
-        self.model = model
-        self.num_simulations = num_simulations
-        self.c_puct = c_puct
-
-    def search(self, root_state):
-        root = MCTSNode(root_state)
-        
-        for _ in range(self.num_simulations):
-            node = root
-            game = GoGame()
-            game.board = root_state.board.copy()
-            game.current_player = root_state.current_player
-            
-            # Selection
-            while node.children and not game.is_game_over():
-                if not all(child.visits for child in node.children.values()):
-                    node = self.expand(node, game)
-                else:
-                    node = self.select_child(node)
-                    game.play(node.move)
-            
-            # Expansion
-            if not game.is_game_over():
-                node = self.expand(node, game)
-            
-            # Simulation
-            value = self.simulate(game)
-            
-            # Backpropagation
-            while node:
-                node.visits += 1
-                node.value += value if node.game_state.current_player == game.current_player else -value
-                node = node.parent
-        
-        return max(root.children.items(), key=lambda x: x[1].visits)[0]
-
-    def expand(self, node, game):
-        legal_moves = game.get_legal_moves()
-        for move in legal_moves:
-            if move not in node.children:
-                new_game = GoGame()
-                new_game.board = game.board.copy()
-                new_game.current_player = game.current_player
-                new_game.play(move)
-                node.children[move] = MCTSNode(new_game, parent=node, move=move)
-        return random.choice(list(node.children.values()))
-
-    def select_child(self, node):
-        total_visits = sum(child.visits for child in node.children.values())
-        return max(node.children.values(), key=lambda child: child.value / (child.visits + 1e-8) + self.c_puct * np.sqrt(total_visits) / (1 + child.visits))
-
-    def simulate(self, game):
-        while not game.is_game_over():
-            move_probs = self.get_move_probabilities(game)
-            move = np.random.choice(361, p=move_probs)
-            game.play((move // 19, move % 19))
-        return game.get_winner()[0]
-
-    def get_move_probabilities(self, game):
-        board_state = self.preprocess_board(game.board, game.current_player)
-        move_probs = self.model.predict(np.expand_dims(board_state, axis=0))[0]
-        legal_moves = game.get_legal_moves()
-        legal_moves = [move for move in legal_moves if move != 'pass']
-        mask = np.zeros(361)
-        for move in legal_moves:
-            mask[move[0] * 19 + move[1]] = 1
-        masked_probs = move_probs * mask
-        return masked_probs / np.sum(masked_probs)
-
-    def preprocess_board(self, board, current_player):
-        state = np.zeros((19, 19, 3), dtype=np.float32)
-        state[:,:,0] = (board == current_player)
-        state[:,:,1] = (board == -current_player)
-        state[:,:,2] = current_player  # 當前玩家的顏色
-        return state
-
-# 自我對弈函數
-def self_play(model, num_games=100):
-    mcts = MCTS(model)
-    training_data = []
-
-    for _ in range(num_games):
-        game = GoGame()
-        game_states = []
-        move_probs = []
-        current_player = []
-
-        while not game.is_game_over():
-            board_state = mcts.preprocess_board(game.board, game.current_player)
-            game_states.append(board_state)
-            current_player.append(game.current_player)
-
-            if random.random() < 0.05:  # 5% 的機會隨機走子，增加探索
-                legal_moves = game.get_legal_moves()
-                move = random.choice(legal_moves)
-            else:
-                move = mcts.search(game)
-
-            probs = np.zeros(361)
-            if move != 'pass':
-                probs[move[0] * 19 + move[1]] = 1
-            move_probs.append(probs)
-
-            game.play(move)
-
-        winner = game.get_winner()[0]
-        for state, probs, player in zip(game_states, move_probs, current_player):
-            training_data.append((state, probs, winner * player))
-
-    return training_data
-
-def load_game_data(file_path):
-    print(f"正在載入遊戲數據從 {file_path}...")
-    data = np.load(file_path)
-    X = data['X']
-    y = data['y']
+def create_training_config(args):
+    """創建訓練配置。"""
+    config = {
+        'batch_size': args.batch_size,
+        'epochs_per_iteration': args.epochs,
+        'num_self_play_games': args.num_games,
+        'num_mcts_simulations': args.mcts_sims,
+        'output_dir': args.output_dir,
+        'log_dir': os.path.join(args.output_dir, 'logs'),
+        'use_mixed_precision': args.use_mixed_precision,
+        'lr_schedule': [(0, args.lr), (10000, args.lr/10), (50000, args.lr/100)]
+    }
     
-    num_games = X.shape[0]
-    X_processed = np.zeros((num_games, 19, 19, 3), dtype=np.float32)
-    y_policy = np.zeros((num_games, 361), dtype=np.float32)
-    y_value = np.zeros((num_games, 1), dtype=np.float32)
+    logger.info(f"訓練配置: {config}")
+    return config
+
+def process_data(args):
+    """處理SGF數據。"""
+    logger.info(f"開始處理SGF數據，來源: {args.sgf_dir}")
     
-    for i in range(num_games):
-        X_processed[i, :, :, 0] = (X[i] == 1)  # 黑子
-        X_processed[i, :, :, 1] = (X[i] == -1)  # 白子
-        X_processed[i, :, :, 2] = 1 if np.sum(X[i] == 1) == np.sum(X[i] == -1) else -1  # 當前玩家 (1 for 黑, -1 for 白)
-        
-        move = np.where(y[i] == 1)
-        if move[0].size > 0 and move[1].size > 0:
-            y_policy[i, move[0][0] * 19 + move[1][0]] = 1
-        
-        # 假設黑子獲勝為 1，白子獲勝為 -1
-        y_value[i] = X_processed[i, :, :, 2].sum()
+    # 獲取所有SGF文件
+    sgf_pattern = os.path.join(args.sgf_dir, '**/*.sgf')
     
-    print(f"載入完成。總共 {num_games} 個棋局狀態。")
-    return X_processed, y_policy, y_value
-
-def train_model_on_game_data(model, X, y_policy, y_value, epochs=10, batch_size=32):
-    print("開始訓練模型...")
-    history = model.fit(X, {'policy': y_policy, 'value': y_value}, 
-                        epochs=epochs, batch_size=batch_size, validation_split=0.1,
-                        callbacks=[tf.keras.callbacks.ProgbarLogger()])
-    print("訓練完成。")
-    return history
-
-def preprocess_game_data(game_data):
-    X = []
-    y_move = []
-    y_value = []
-    for board_state, move, winner in game_data:
-        X.append(board_state)
-        move_prob = np.zeros(361)
-        move_prob[move[0] * 19 + move[1]] = 1
-        y_move.append(move_prob)
-        y_value.append(winner)
-    return np.array(X), np.array(y_move), np.array(y_value)
-
-
-# 訓練循環
-def train_model(model, train_data, val_data, epochs=30, batch_size=2048):
-    strategy = tf.distribute.MirroredStrategy()
-    with strategy.scope():
-        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
-                    loss={'policy': 'categorical_crossentropy', 'value': 'mse'},
-                    metrics={'policy': 'accuracy', 'value': 'mae'})
-
-    tf.keras.mixed_precision.set_global_policy('mixed_float16')
-
-    train_dataset = create_dataset(train_data, batch_size)
-    val_dataset = create_dataset(val_data, batch_size)
-
-    callbacks = [
-        tf.keras.callbacks.LearningRateScheduler(lr_schedule),
-        tf.keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True),
-        tf.keras.callbacks.ModelCheckpoint('best_model.h5', save_best_only=True),
-        tf.keras.callbacks.TensorBoard(log_dir='./logs')
-    ]
-
-    history = model.fit(
-        train_dataset,
-        epochs=epochs,
-        validation_data=val_dataset,
-        callbacks=callbacks
+    # 處理SGF文件
+    train_data, val_data = process_sgf_files(
+        sgf_pattern,
+        output_file=args.data_file,
+        min_rank=args.min_rank,
+        verbose=args.verbose
     )
+    
+    logger.info(f"數據處理完成，保存到: {args.data_file}")
+    return train_data, val_data
 
-    plot_training_history(history)
-    return model, history
+def selfplay(model, args):
+    """執行自我對弈。"""
+    logger.info(f"開始自我對弈，遊戲數: {args.num_games}")
+    
+    # 創建訓練配置
+    config = create_training_config(args)
+    
+    # 創建訓練管線
+    pipeline = TrainingPipeline(model, config=config)
+    
+    # 執行自我對弈
+    states, policies, values = pipeline.self_play(num_games=args.num_games)
+    
+    # 保存自我對弈數據
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_file = os.path.join(args.output_dir, f'selfplay_{timestamp}.npz')
+    np.savez_compressed(
+        output_file,
+        states=states,
+        policies=policies,
+        values=values
+    )
+    
+    logger.info(f"自我對弈完成，數據已保存到: {output_file}")
+    return states, policies, values
 
-def train_model_on_self_play(model, training_data, epochs=5, batch_size=32):
-    states, policies, values = zip(*training_data)
-    states = np.array(states)
-    policies = np.array(policies)
-    values = np.array(values)
-    model.fit(states, [policies, values], epochs=epochs, batch_size=batch_size, validation_split=0.1)
+def train(model, args, initial_data=None):
+    """訓練模型。"""
+    logger.info(f"開始訓練，迭代次數: {args.iterations}")
     
-def plot_training_history(history):
-    plt.figure(figsize=(12, 4))
+    # 創建訓練配置
+    config = create_training_config(args)
     
-    plt.subplot(1, 2, 1)
-    plt.plot(history.history['policy_loss'], label='Policy Loss')
-    plt.plot(history.history['value_loss'], label='Value Loss')
-    plt.plot(history.history['val_policy_loss'], label='Val Policy Loss')
-    plt.plot(history.history['val_value_loss'], label='Val Value Loss')
-    plt.title('Model Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
+    # 創建訓練管線
+    pipeline = TrainingPipeline(model, config=config)
     
-    plt.subplot(1, 2, 2)
-    plt.plot(history.history['policy_accuracy'], label='Policy Accuracy')
-    plt.plot(history.history['value_mae'], label='Value MAE')
-    plt.plot(history.history['val_policy_accuracy'], label='Val Policy Accuracy')
-    plt.plot(history.history['val_value_mae'], label='Val Value MAE')
-    plt.title('Model Metrics')
-    plt.xlabel('Epoch')
-    plt.ylabel('Metric')
-    plt.legend()
+    # 如果有初始數據，載入
+    if initial_data is None and args.data_file and os.path.exists(args.data_file):
+        train_data, val_data = load_data(args.data_file, verbose=args.verbose)
+        initial_data = train_data
     
-    plt.tight_layout()
-    plt.savefig('training_history.png')
-    plt.close()
+    # 執行訓練迭代
+    pipeline.run_training(args.iterations, initial_data=initial_data)
     
+    logger.info(f"訓練完成，模型已保存到: {args.output_dir}")
+    return pipeline
+
+def evaluate(model, args):
+    """評估模型。"""
+    logger.info("開始評估模型")
     
+    # 載入對手模型（如果存在）
+    opponent_model = None
+    opponent_path = args.model_path + "_opponent" if args.model_path else None
+    if opponent_path and os.path.exists(opponent_path):
+        try:
+            opponent_model = create_model(args)
+            opponent_model.load_weights(opponent_path)
+            logger.info(f"載入對手模型: {opponent_path}")
+        except Exception as e:
+            logger.error(f"載入對手模型失敗: {str(e)}")
+    
+    # 創建訓練配置
+    config = create_training_config(args)
+    
+    # 創建訓練管線
+    pipeline = TrainingPipeline(model, config=config)
+    
+    # 評估模型
+    results = pipeline.evaluate_model(opponent_model=opponent_model, num_games=args.num_games)
+    
+    # 保存評估結果
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_file = os.path.join(args.output_dir, f'evaluation_{timestamp}.json')
+    with open(output_file, 'w') as f:
+        json.dump(results, f, indent=4)
+    
+    logger.info(f"評估完成，結果已保存到: {output_file}")
+    return results
+
 def main():
-    # 載入和預處理數據
-    X, y_policy, y_value = load_game_data("path_to_your_game_data.npz")
+    """主函數。"""
+    # 解析命令行參數
+    args = parse_args()
     
-    # 分割數據為訓練集和驗證集
-    split_index = int(0.9 * len(X))  # 90% 用於訓練，10% 用於驗證
-    train_data = (X[:split_index], y_policy[:split_index], y_value[:split_index])
-    val_data = (X[split_index:], y_policy[split_index:], y_value[split_index:])
-
-    # 創建模型
-    model = create_cnn_model()
-
-    # 訓練模型
-    model, history = train_model(model, train_data, val_data, epochs=30, batch_size=2048)
-
-    # 繪製訓練歷史
-    plot_training_history(history)
-
-    # 保存最終模型
-    model.save('final_go_ai_model.h5')
-
-    # 自我對弈和微調（如果需要）
-    for iteration in tqdm(range(20), desc="自我對弈迭代"):
-        training_data = self_play(model, num_games=500)
-        X_self, y_policy_self, y_value_self = preprocess_game_data(training_data)
+    # 設置GPU選項
+    set_gpu_options(args.gpu)
+    
+    # 確保輸出目錄存在
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # 根據模式執行相應操作
+    if args.mode == 'process_data':
+        # 處理SGF數據
+        train_data, val_data = process_data(args)
+    else:
+        # 創建模型
+        model = create_model(args)
         
-        # 將自我對弈數據與原始訓練數據合併
-        X_combined = np.concatenate([train_data[0], X_self])
-        y_policy_combined = np.concatenate([train_data[1], y_policy_self])
-        y_value_combined = np.concatenate([train_data[2], y_value_self])
-        
-        combined_data = (X_combined, y_policy_combined, y_value_combined)
-        
-        # 重新訓練模型
-        model, history = train_model(model, combined_data, val_data, epochs=5, batch_size=2048)
-        
-        # 繪製每次迭代後的訓練歷史
-        plot_training_history(history)
+        if args.mode == 'selfplay':
+            # 僅執行自我對弈
+            states, policies, values = selfplay(model, args)
+        elif args.mode == 'eval':
+            # 評估模型
+            results = evaluate(model, args)
+        else:  # 'train'
+            # 完整訓練
+            pipeline = train(model, args)
 
-    # 保存最終模型
-    model.save('SilvaGo1.h5')
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as e:
+        logger.exception(f"程序執行過程中發生錯誤: {str(e)}")
+        sys.exit(1)
