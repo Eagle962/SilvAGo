@@ -1,5 +1,5 @@
 processed_kgs_data8.npz
 process_kgs_dataset_50000.npz
 train_cnn_mcts.log
-models
-config
+models/
+config/
