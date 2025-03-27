@@ -245,19 +245,43 @@ class MCTS:
         return game.get_state_features()
     
     def _evaluate_state(self, features):
-        """使用神經網絡評估棋盤狀態。
-        
-        Args:
-            features: 棋盤特徵，形狀為(19, 19, 17)
-            
-        Returns:
-            (policy, value): 政策（移動概率）和狀態價值
-        """
+        """使用神經網絡評估棋盤狀態。"""
         # 準備網絡輸入，確保維度正確
-        X = np.expand_dims(features, axis=0)  # 添加批次維度
+        X_board = np.expand_dims(features, axis=0)  # 添加批次維度
+        
+        # 檢查模型的期望輸入形狀
+        expected_shape = self.model.inputs[0].shape
+        actual_shape = X_board.shape
+        
+        # 打印調試信息
+        print(f"模型期望輸入形狀: {expected_shape}, 實際輸入形狀: {actual_shape}")
+        
+        # 調整輸入形狀以匹配模型期望
+        if expected_shape[-1] == 3 and actual_shape[-1] == 17:
+            # 只使用前3個通道（當前黑白棋子和當前玩家）
+            X_board_adjusted = X_board[:, :, :, :3]
+            print("調整輸入特徵: 只使用前3個通道")
+        else:
+            X_board_adjusted = X_board
+        
+        # 檢查模型類型 - 檢測CNN-RNN模型
+        is_cnn_rnn = len(self.model.inputs) > 1
         
         # 使用模型預測
-        policy_output, value_output = self.model.predict(X, verbose=0)
+        if is_cnn_rnn:
+            # 為CNN-RNN模型準備額外的序列輸入
+            sequence_shape = self.model.inputs[1].shape
+            sequence_length = sequence_shape[1]
+            sequence_features = sequence_shape[2]
+            
+            # 為RNN創建虛擬序列輸入（全零）
+            X_sequence = np.zeros((1, sequence_length, sequence_features), dtype=np.float32)
+            
+            # 使用兩個輸入進行預測
+            policy_output, value_output = self.model.predict([X_board_adjusted, X_sequence], verbose=0)
+        else:
+            # 標準模型只使用棋盤特徵
+            policy_output, value_output = self.model.predict(X_board_adjusted, verbose=0)
         
         # 處理政策輸出（轉為字典）
         policy = {}

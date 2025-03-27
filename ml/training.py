@@ -361,12 +361,14 @@ class TrainingPipeline:
     
     def plot_training_history(self, history):
         """繪製訓練歷史曲線。"""
+        print("可用的指標名稱:", list(history.history.keys()))
         plt.figure(figsize=(15, 5))
         
         # 損失曲線
         plt.subplot(1, 3, 1)
         plt.plot(history.history['loss'], label='Training Loss')
-        plt.plot(history.history['val_loss'], label='Validation Loss')
+        if 'val_loss' in history.history:
+            plt.plot(history.history['val_loss'], label='Validation Loss')
         plt.title('Loss')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
@@ -374,8 +376,19 @@ class TrainingPipeline:
         
         # 策略準確率
         plt.subplot(1, 3, 2)
-        plt.plot(history.history['policy_accuracy'], label='Training Policy Accuracy')
-        plt.plot(history.history['val_policy_accuracy'], label='Validation Policy Accuracy')
+        # 尋找策略相關指標
+        policy_acc_key = None
+        val_policy_acc_key = None
+        for key in history.history:
+            if 'policy' in key and ('acc' in key or 'accuracy' in key) and not key.startswith('val_'):
+                policy_acc_key = key
+            if 'policy' in key and ('acc' in key or 'accuracy' in key) and key.startswith('val_'):
+                val_policy_acc_key = key
+        
+        if policy_acc_key:
+            plt.plot(history.history[policy_acc_key], label='Training Policy Accuracy')
+        if val_policy_acc_key:
+            plt.plot(history.history[val_policy_acc_key], label='Validation Policy Accuracy')
         plt.title('Policy Accuracy')
         plt.xlabel('Epoch')
         plt.ylabel('Accuracy')
@@ -383,8 +396,19 @@ class TrainingPipeline:
         
         # 價值MAE
         plt.subplot(1, 3, 3)
-        plt.plot(history.history['value_mean_absolute_error'], label='Training Value MAE')
-        plt.plot(history.history['val_value_mean_absolute_error'], label='Validation Value MAE')
+        # 尋找價值相關指標
+        value_mae_key = None
+        val_value_mae_key = None
+        for key in history.history:
+            if 'value' in key and ('mae' in key or 'mean_absolute_error' in key) and not key.startswith('val_'):
+                value_mae_key = key
+            if 'value' in key and ('mae' in key or 'mean_absolute_error' in key) and key.startswith('val_'):
+                val_value_mae_key = key
+        
+        if value_mae_key:
+            plt.plot(history.history[value_mae_key], label='Training Value MAE')
+        if val_value_mae_key:
+            plt.plot(history.history[val_value_mae_key], label='Validation Value MAE')
         plt.title('Value Mean Absolute Error')
         plt.xlabel('Epoch')
         plt.ylabel('MAE')

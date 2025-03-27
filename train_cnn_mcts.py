@@ -164,7 +164,17 @@ def load_and_preprocess_data(data_file, sequence_length=8, verbose=True, sample_
             y_policy.append(policy)
             
             # 價值標籤 (沒有勝負信息，使用0)
-            y_value.append([0.0])
+            black_stones = np.sum(X[i] == 1)
+            white_stones = np.sum(X[i] == -1)
+            if black_stones + white_stones > 0:
+                # 黑白棋子數量差異，歸一化到 [-0.5, 0.5] 範圍
+                board_control = 0.5 * (black_stones - white_stones) / (black_stones + white_stones)
+                # 從當前玩家的角度來看價值
+                value = board_control * current_player
+            else:
+                value = 0.0
+                
+            y_value.append([value])
         
         # 轉換為NumPy數組
         X_board = np.array(X_board, dtype=np.float32)
@@ -252,7 +262,7 @@ def train_cnn_rnn_model(data_file, output_dir, epochs=30, batch_size=32, sample_
     )
     
     # 保存最終模型
-    model_path = os.path.join(output_dir, 'final_model')
+    model_path = os.path.join(output_dir, 'final_model.keras')
     model.save(model_path)
     logger.info(f"訓練完成，模型已保存到 {model_path}")
     

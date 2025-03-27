@@ -28,7 +28,7 @@ try:
     HAS_PYGAME = True
 except ImportError:
     HAS_PYGAME = False
-    print("未找到pygame庫，將使用命令行界面。使用 'pip install pygame' 安裝pygame以獲得圖形界面。")
+    print("未找到pygame庫")
 
 # 設置日誌記錄
 logging.basicConfig(
@@ -449,27 +449,42 @@ def load_model(model_path, model_type='residual'):
     """載入AI模型。"""
     logger.info(f"載入模型: {model_path}")
     
-    # 確定輸入形狀
-    input_shape = (19, 19, 17)  # 標準圍棋特徵平面
+    # 檢查文件擴展名
+    file_extension = os.path.splitext(model_path)[1].lower()
     
-    # 根據模型類型創建模型
-    if model_type == 'residual':
-        model = create_go_model(input_shape=input_shape)
-    elif model_type == 'light':
-        model = create_light_model(input_shape=input_shape)
-    elif model_type == 'cnn_rnn':
-        model = create_cnn_rnn_model(board_input_shape=input_shape)
+    if file_extension == '.keras':
+        # 直接加載整個.keras模型
+        try:
+            import tensorflow as tf
+            model = tf.keras.models.load_model(model_path)
+            logger.info("模型載入成功 (.keras格式)")
+            return model
+        except Exception as e:
+            logger.error(f"載入.keras模型失敗: {str(e)}")
+            return None
     else:
-        raise ValueError(f"未知的模型類型: {model_type}")
-    
-    # 載入權重
-    try:
-        model.load_weights(model_path)
-        logger.info("模型載入成功")
-        return model
-    except Exception as e:
-        logger.error(f"載入模型失敗: {str(e)}")
-        return None
+        # 原始的加載方式（适用于.h5格式的權重文件）
+        # 確定輸入形狀
+        input_shape = (19, 19, 17)  # 標準圍棋特徵平面
+        
+        # 根據模型類型創建模型
+        if model_type == 'residual':
+            model = create_go_model(input_shape=input_shape)
+        elif model_type == 'light':
+            model = create_light_model(input_shape=input_shape)
+        elif model_type == 'cnn_rnn':
+            model = create_cnn_rnn_model(board_input_shape=input_shape)
+        else:
+            raise ValueError(f"未知的模型類型: {model_type}")
+        
+        # 載入權重
+        try:
+            model.load_weights(model_path)
+            logger.info("模型權重載入成功")
+            return model
+        except Exception as e:
+            logger.error(f"載入模型權重失敗: {str(e)}")
+            return None
 
 def main():
     """主函數。"""
