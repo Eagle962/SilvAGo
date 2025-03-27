@@ -73,9 +73,20 @@ def load_and_preprocess_data(data_file, sequence_length=8, verbose=True, sample_
         X = data['X']
         y = data['y']
         
+        # 檢查是否有勝負信息
+        has_winners = 'winners' in data
+        if has_winners and verbose:
+            logger.info("找到勝負信息！使用實際比賽結果作為價值標籤")
+            winners = data['winners']
+        else:
+            if verbose:
+                logger.info("未找到勝負信息，將使用啟發式方法估計價值")
+        
         total_samples = len(X)
         if verbose:
             logger.info(f"原始數據形狀：X: {X.shape}, y: {y.shape}")
+            if has_winners:
+                logger.info(f"winners: {winners.shape}")
         
         # 應用數據抽樣
         if sample_rate is not None or max_samples is not None:
@@ -93,6 +104,8 @@ def load_and_preprocess_data(data_file, sequence_length=8, verbose=True, sample_
             
             X = X[indices]
             y = y[indices]
+            if has_winners:
+                winners = winners[indices]
             
             if verbose:
                 logger.info(f"應用抽樣後的數據形狀：X: {X.shape}, y: {y.shape}")
@@ -163,18 +176,23 @@ def load_and_preprocess_data(data_file, sequence_length=8, verbose=True, sample_
                 policy[move_idx] = 1.0
             y_policy.append(policy)
             
-            # 價值標籤 (沒有勝負信息，使用0)
-            black_stones = np.sum(X[i] == 1)
-            white_stones = np.sum(X[i] == -1)
-            if black_stones + white_stones > 0:
-                # 黑白棋子數量差異，歸一化到 [-0.5, 0.5] 範圍
-                board_control = 0.5 * (black_stones - white_stones) / (black_stones + white_stones)
-                # 從當前玩家的角度來看價值
-                value = board_control * current_player
+            # 處理價值標籤
+            if has_winners:
+                # 使用實際勝負信息
+                y_value.append([winners[i]])
             else:
-                value = 0.0
-                
-            y_value.append([value])
+                # 使用啟發式方法估計價值
+                black_stones = np.sum(X[i] == 1)
+                white_stones = np.sum(X[i] == -1)
+                if black_stones + white_stones > 0:
+                    # 黑白棋子數量差異，歸一化到 [-0.5, 0.5] 範圍
+                    board_control = 0.5 * (black_stones - white_stones) / (black_stones + white_stones)
+                    # 從當前玩家的角度來看價值
+                    value = board_control * current_player
+                else:
+                    value = 0.0
+                    
+                y_value.append([value])
         
         # 轉換為NumPy數組
         X_board = np.array(X_board, dtype=np.float32)
@@ -201,6 +219,7 @@ def load_and_preprocess_data(data_file, sequence_length=8, verbose=True, sample_
         
         if verbose:
             logger.info(f"處理完成。訓練集大小: {len(train_data['X_board'])}, 驗證集大小: {len(val_data['X_board'])}")
+            logger.info(f"價值標籤範圍: min={np.min(y_value):.4f}, max={np.max(y_value):.4f}, mean={np.mean(y_value):.4f}")
         
         return train_data, val_data
     
@@ -225,6 +244,15 @@ def train_cnn_rnn_model(data_file, output_dir, epochs=30, batch_size=32, sample_
     # 創建CNN-RNN模型
     logger.info("創建CNN-RNN混合模型...")
     model = create_cnn_rnn_model(input_shape=(19, 19, 3), sequence_length=8)
+    
+    # 重新編譯模型，調整損失權重
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        loss={'policy': 'categorical_crossentropy', 'value': 'mse'},
+        loss_weights={'policy': 1.0, 'value': 1.0},  # 可以根據需要調整權重
+        metrics={'policy': 'accuracy', 'value': 'mae'}
+    )
+    
     model.summary()  # 打印模型結構
     
     # 設置回調函數
@@ -298,7 +326,7 @@ def plot_training_history(history, output_dir):
         
         # 價值MAE
         plt.subplot(1, 3, 3)
-        plt.plot(history.history['value_mean_absolute_error'], label='Value MAE')
+        plt.plot(history.history['value_mae'], label='Value MAE')
         plt.plot(history.history['val_value_mean_absolute_error'], label='Val Value MAE')
         plt.title('Value Mean Absolute Error')
         plt.xlabel('Epoch')
@@ -317,9 +345,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='圍棋AI訓練腳本')
     
     # 數據相關
-    parser.add_argument('--data_file', type=str, default=r"C:\Users\User\Desktop\SilvAGo\processed_kgs_data8.npz",
+    parser.add_argument('--data_file', type=str, default=r"C:\Users\User\Desktop\SilvAGo\process_kgs_dataset_10.npz",
                        help='數據文件路徑')
-    parser.add_argument('--sample_rate', type=float, default=None,
+    parser.add_argument('--sample_rate', type=float, default=0.4,
                        help='數據抽樣比例 (0到1之間)')
     parser.add_argument('--max_samples', type=int, default=None,
                        help='最大樣本數量')

@@ -190,6 +190,6 @@ def sgf_to_numpy(sgf_content, board_size=19):
 # 使用示例
 if __name__ == "__main__":
     main_directory = r"C:\Users\User\Desktop\Gogame data"
-    output_file = "process_kgs_dataset_50000.npz"
-    process_kgs_dataset(main_directory, output_file, min_rank=7, sample_rate=0.1, max_files=50000)
+    output_file = "process_kgs_dataset_10.npz"
+    process_kgs_dataset(main_directory, output_file, min_rank=7, sample_rate=0.1, max_files=10)
     print("處理完成")
