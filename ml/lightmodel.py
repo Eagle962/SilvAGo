@@ -119,6 +119,14 @@ def train_lightweight_model(data_file, output_dir, epochs=30, batch_size=64, sam
     X = data['X']
     y = data['y']
     
+    # 檢查是否有勝負信息
+    has_winners = 'winners' in data
+    if has_winners:
+        logger.info("找到勝負信息！使用實際比賽結果作為價值標籤")
+        winners = data['winners']
+    else:
+        logger.info("未找到勝負信息，將使用啟發式方法估計價值")
+    
     total_samples = len(X)
     logger.info(f"原始數據形狀：X: {X.shape}, y: {y.shape}")
     
@@ -135,6 +143,8 @@ def train_lightweight_model(data_file, output_dir, epochs=30, batch_size=64, sam
         
         X = X[indices]
         y = y[indices]
+        if has_winners:
+            winners = winners[indices]
         
         logger.info(f"應用抽樣後的數據形狀：X: {X.shape}, y: {y.shape}")
         logger.info(f"抽樣比例: {len(X)/total_samples:.2%}")
@@ -197,14 +207,32 @@ def train_lightweight_model(data_file, output_dir, epochs=30, batch_size=64, sam
             policy[move_idx] = 1.0
         y_policy.append(policy)
         
-        # 價值標籤 (沒有勝負信息，使用0)
-        y_value.append([0.0])
+        # 處理價值標籤
+        if has_winners:
+            # 使用實際勝負信息
+            y_value.append([winners[i] * current_player])
+        else:
+            # 使用啟發式方法估計價值
+            black_stones = np.sum(X[i] == 1)
+            white_stones = np.sum(X[i] == -1)
+            if black_stones + white_stones > 0:
+                # 黑白棋子數量差異，歸一化到 [-0.5, 0.5] 範圍
+                board_control = 0.5 * (black_stones - white_stones) / (black_stones + white_stones)
+                # 從當前玩家的角度來看價值
+                value = board_control * current_player
+            else:
+                value = 0.0
+            
+            y_value.append([value])
     
     # 轉換為NumPy數組
     X_board = np.array(X_board, dtype=np.float32)
     X_sequence = np.array(X_sequence, dtype=np.float32)
     y_policy = np.array(y_policy, dtype=np.float32)
     y_value = np.array(y_value, dtype=np.float32)
+    
+    # 顯示價值標籤統計
+    logger.info(f"價值標籤範圍: min={np.min(y_value):.4f}, max={np.max(y_value):.4f}, mean={np.mean(y_value):.4f}")
     
     # 分割訓練集和驗證集 (9:1)
     split_idx = int(0.9 * len(X_board))
@@ -292,8 +320,8 @@ def train_lightweight_model(data_file, output_dir, epochs=30, batch_size=64, sam
     
     # 價值MAE
     plt.subplot(1, 3, 3)
-    plt.plot(history.history['value_mean_absolute_error'], label='Value MAE')
-    plt.plot(history.history['val_value_mean_absolute_error'], label='Val Value MAE')
+    plt.plot(history.history['value_mae'], label='Value MAE')
+    plt.plot(history.history['val_value_mae'], label='Val Value MAE')
     plt.title('Value Mean Absolute Error')
     plt.xlabel('Epoch')
     plt.ylabel('MAE')
@@ -302,6 +330,7 @@ def train_lightweight_model(data_file, output_dir, epochs=30, batch_size=64, sam
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, 'training_history.png'))
     plt.close()
+    logger.info(f"訓練歷史圖表已保存到 {os.path.join(output_dir, 'training_history.png')}")
     
     return model, history
 
