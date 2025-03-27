@@ -1,5 +1,24 @@
-processed_kgs_data8.npz
-process_kgs_dataset_50000.npz
-train_cnn_mcts.log
+# 忽略所有 .keras 模型檔案
+*.keras
+
+# 忽略大型 npz 檔案
+*.npz
+
+# 忽略 TensorFlow 日誌
+**/logs/
+*.tfevents.*
+
+# 忽略 Python 快取
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 忽略整個 models 目錄
 models/
-config/
+
+# 忽略訓練日誌
+*.log
+
+# 如果需要保留 models 目錄結構但忽略內容，請改用以下方式
+# models/**/*.keras
+# models/**/logs/
